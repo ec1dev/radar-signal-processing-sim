@@ -91,6 +91,18 @@ python -m examples.basic_comparison
 pytest
 ```
 
+### Interactive Demo (WebSocket + React)
+
+```bash
+# Terminal 1: start the backend
+python -m radar_sim
+
+# Terminal 2: start the frontend
+cd frontend && npm run dev
+```
+
+Open <http://localhost:5173> to see the interactive PPI scope display. Switch modes, adjust PRF/power/threshold with sliders, and watch detections update in real time.
+
 ### Example Scripts
 
 ```bash
@@ -98,6 +110,7 @@ python -m examples.basic_comparison      # SRC vs MTI vs PD side-by-side
 python -m examples.blind_speed_demo      # MTI blind speed analysis
 python -m examples.range_ambiguity_demo  # PD range folding demonstration
 python -m examples.clutter_rejection     # Clutter false alarm comparison
+python -m examples.tws_tracking_demo     # TWS multi-target tracking over time
 ```
 
 ## Project Structure
@@ -109,11 +122,14 @@ radar-signal-processing-sim/
 │   ├── engine.py                # SimulationEngine: ties scenario + physics + modes
 │   ├── radar/physics.py         # Radar equation, Doppler, clutter model
 │   ├── scenario/world.py        # Scenario management, target kinematics
-│   └── modes/
-│       ├── base_mode.py         # BaseMode ABC (plugin interface)
-│       ├── src.py               # Search mode (range gating)
-│       ├── mti.py               # Moving Target Indication (pulse canceller)
-│       └── pulse_doppler.py     # Pulse Doppler (FFT + CFAR)
+│   ├── modes/
+│   │   ├── base_mode.py         # BaseMode ABC (plugin interface)
+│   │   ├── src.py               # Search mode (range gating)
+│   │   ├── mti.py               # Moving Target Indication (pulse canceller)
+│   │   ├── pulse_doppler.py     # Pulse Doppler (FFT + CFAR)
+│   │   └── tws/                 # Track-While-Scan (EKF + scan model)
+│   └── api/server.py            # FastAPI WebSocket server
+├── frontend/                    # React + TypeScript PPI scope display
 ├── tests/                       # 105 pytest tests
 ├── examples/                    # Runnable demonstration scripts
 ├── docs/                        # Technical documentation

@@ -37,5 +37,6 @@ Thumbs.db
 .env
 .env.local
 
-# Future frontend
+# Frontend
 node_modules/
+frontend/dist/

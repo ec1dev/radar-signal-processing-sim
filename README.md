@@ -42,13 +42,13 @@ list[RawReturn]  ---- received power, range, Doppler per scatterer
 
 Results from the default scenario (5 airborne targets + 200 ground clutter cells):
 
-| Metric | SRC | MTI | Pulse Doppler |
-| -------- | ----- | ----- | --------------- |
-| Targets detected (of 5) | 3 | 1-2 | 4 |
-| Clutter false alarms | 197 | 0 | 3-7 |
-| Velocity measurement | No | Approximate | Precise (FFT) |
-| Clutter rejection | None | Pulse cancellation | Notch filter + CFAR |
-| Key weakness | Drowns in clutter | Blind speeds | Range ambiguity |
+| Metric | SRC | MTI | Pulse Doppler | TWS |
+| -------- | ----- | ----- | --------------- | ----- |
+| Targets detected (of 5) | 3 | 1-2 | 4 | 2+ (tracked) |
+| Clutter false alarms | 197 | 0 | 3-7 | 0 |
+| Velocity measurement | No | Approximate | Precise (FFT) | EKF-smoothed |
+| Clutter rejection | None | Pulse cancellation | Notch filter + CFAR | Scan gating + M/N |
+| Key weakness | Drowns in clutter | Blind speeds | Range ambiguity | Slow update rate |
 
 ## Key Demonstrations
 
@@ -73,6 +73,7 @@ With defaults: $P_t$ = 50 kW, $G$ = 33 dBi, $\lambda$ = 3 cm, $P_n = kTBF$ = 1.0
 - **SRC:** Groups returns into 150 m range bins, sums power, thresholds at SNR > 13 dB. No filtering.
 - **MTI:** Applies $|H(f)|^2 = \sin^2(\pi f_d / \text{PRF})$ gain to each return. Zero at DC (clutter) and at blind speeds ($v = n \cdot 30$ m/s).
 - **Pulse Doppler:** Synthesizes slow-time signal $s[n] = \sum_k A_k e^{j 2\pi f_{d,k} n/\text{PRF}} + w[n]$, applies Kaiser window + FFT, notches DC, runs CA-CFAR with guard/training cells adapted around the notch.
+- **TWS:** Antenna scans 120 deg volume at 60 deg/s. Detections are associated to tracks via Mahalanobis gating. Matched tracks are updated with a 4-state Extended Kalman Filter (constant-velocity model, range-azimuth measurements). Tracks follow a tentative -> confirmed -> coasting -> dropped lifecycle with M-of-N confirmation.
 
 See [docs/physics.md](docs/physics.md), [docs/modes.md](docs/modes.md), and [docs/architecture.md](docs/architecture.md) for full details.
 
@@ -113,7 +114,7 @@ radar-signal-processing-sim/
 │       ├── src.py               # Search mode (range gating)
 │       ├── mti.py               # Moving Target Indication (pulse canceller)
 │       └── pulse_doppler.py     # Pulse Doppler (FFT + CFAR)
-├── tests/                       # 81 pytest tests
+├── tests/                       # 105 pytest tests
 ├── examples/                    # Runnable demonstration scripts
 ├── docs/                        # Technical documentation
 │   ├── physics.md               # Radar equation, noise, clutter derivations
@@ -124,7 +125,7 @@ radar-signal-processing-sim/
 
 ## Roadmap
 
-- [ ] TWS (Track-While-Scan) mode with Kalman filter state estimation
+- [x] TWS (Track-While-Scan) mode with Extended Kalman Filter and multi-target tracking
 - [ ] FastAPI WebSocket server for real-time simulation streaming
 - [ ] React frontend with PPI/B-scope radar display
 - [ ] PRF agility for resolving blind speeds and range ambiguities

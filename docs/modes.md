@@ -111,3 +111,60 @@ $$v = f_d \cdot \lambda / 2$$
 - Kaiser window trades velocity resolution for sidelobe suppression
 
 **Real-world systems:** F-16 APG-68, F/A-18 APG-73, F-22 APG-77 (AESA), Eurofighter CAPTOR, all modern AESA fighter radars.
+
+---
+
+## TWS (Track-While-Scan)
+
+**Purpose:** Build and maintain persistent multi-target tracks by combining periodic antenna scan updates with an Extended Kalman Filter (EKF).
+
+Unlike the other three modes which are stateless (each `process()` call is independent), TWS is **stateful** — it maintains track state across successive calls, accumulating information over multiple scan sweeps.
+
+**Processing pipeline:**
+
+1. **Antenna scan**: The beam sweeps across a 120 deg volume at 60 deg/s. Only returns within the current 3 deg beamwidth are processed. The scan period (one full left-right-left sweep) is 4 seconds.
+
+2. **Scan gating**: Raw returns are filtered to keep only those illuminated by the current beam position. This is the fundamental TWS constraint — each target is only observed briefly once per scan.
+
+3. **Detection threshold**: Simple SNR threshold on illuminated returns, same as SRC.
+
+4. **Detection-to-track association**: New detections are matched to existing tracks using Mahalanobis-distance gating:
+   - Predicted measurement: $z_{pred} = h(x_{predicted})$ (Cartesian to range-azimuth)
+   - Innovation covariance: $S = H P H^T + R$
+   - Gate test: $(z - z_{pred})^T S^{-1} (z - z_{pred}) < \chi^2_{0.99}(2)$
+   - Nearest-neighbour assignment for gated pairs
+
+5. **EKF update** on matched tracks. State vector is 4-D Cartesian: $x = [x, \dot{x}, y, \dot{y}]$. The measurement model is nonlinear (Cartesian to polar), requiring the Extended Kalman Filter:
+   - Measurement function: $h(x) = [\sqrt{x^2 + y^2}, \arctan2(x, y)]$
+   - Jacobian: $H = \partial h / \partial x$ evaluated at the predicted state
+   - Joseph-form covariance update for numerical stability
+
+6. **Track lifecycle management**:
+   - **Tentative**: single detection, waiting for confirmation
+   - **Confirmed**: M-of-N rule (3 hits in 5 scan opportunities)
+   - **Coasting**: confirmed track with missed detections, predict only
+   - **Dropped**: 5 consecutive misses, track deleted
+
+7. **Output**: One Detection per confirmed/coasting track with EKF-smoothed position and velocity.
+
+**EKF dynamics model (constant velocity):**
+
+$$F = \begin{bmatrix} 1 & dt & 0 & 0 \\ 0 & 1 & 0 & 0 \\ 0 & 0 & 1 & dt \\ 0 & 0 & 0 & 1 \end{bmatrix}$$
+
+Process noise uses the continuous white-noise acceleration model with spectral density $q = 100$ m$^2$/s$^4$.
+
+**Strengths:**
+- Persistent track state — maintains target identity across scan updates
+- Velocity estimation improves with each update (EKF convergence)
+- Can handle targets that intermittently drop below detection threshold
+- Track quality metric enables prioritized resource allocation
+
+**Weaknesses:**
+- Slow update rate — each target is revisited only once per scan period
+- Track initiation delay — requires multiple scans to confirm
+- Association ambiguity in dense target environments
+- Constant-velocity model cannot track high-g maneuvers without model adaptation
+
+**Comparison with STT (Single Target Track):** STT dedicates the beam to one target for continuous updates. TWS shares the beam across all targets with periodic updates. Modern AESA radars interleave both: TWS for situational awareness, STT for engagement-quality tracks.
+
+**Real-world systems:** F-15 APG-63 (one of the first TWS implementations), F-16 APG-68, F/A-18 APG-73, AN/APG-77 (F-22, uses a more advanced variant with adaptive scheduling), Rafale RBE2.

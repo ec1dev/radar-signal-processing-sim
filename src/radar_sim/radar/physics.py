@@ -62,11 +62,16 @@ class PhysicsEngine:
 
         received_power = numerator / denominator
 
+        # Azimuth: angle from north (radar heading), east positive
+        azimuth_rad = np.arctan2(dx, dy) - self.position.heading
+        azimuth_deg = float(np.degrees(azimuth_rad))
+
         return RawReturn(
             range_m=range_m,
             radial_velocity=radial_velocity,
             received_power=received_power,
             doppler_hz=doppler_hz,
+            azimuth_deg=azimuth_deg,
             target_id=target.id,
             is_clutter=False,
         )
@@ -118,11 +123,17 @@ class PhysicsEngine:
             clutter_vel = np.random.normal(0, 0.5)  # small spread, m/s
             clutter_doppler = 2 * clutter_vel / self.radar.wavelength
 
+            # Distribute clutter across the beam — azimuth centered on boresight
+            clutter_az = np.random.uniform(
+                -self.radar.beamwidth_az / 2, self.radar.beamwidth_az / 2
+            )
+
             clutter_returns.append(RawReturn(
                 range_m=r,
                 radial_velocity=clutter_vel,
                 received_power=clutter_power,
                 doppler_hz=clutter_doppler,
+                azimuth_deg=clutter_az,
                 target_id=None,
                 is_clutter=True,
             ))

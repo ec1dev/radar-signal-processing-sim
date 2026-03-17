@@ -12,6 +12,7 @@ from radar_sim.modes.base_mode import BaseMode
 from radar_sim.modes.src import SRCMode
 from radar_sim.modes.mti import MTIMode
 from radar_sim.modes.pulse_doppler import PulseDopplerMode
+from radar_sim.modes.tws import TWSMode
 
 
 @dataclass
@@ -54,7 +55,7 @@ class SimulationEngine:
             RadarMode.SRC: SRCMode(self.radar),
             RadarMode.MTI: MTIMode(self.radar, num_pulses=2),
             RadarMode.PULSE_DOPPLER: PulseDopplerMode(self.radar),
-            # RadarMode.TWS: TWSMode(self.radar),  # TODO
+            RadarMode.TWS: TWSMode(self.radar, position=self.position),
         }
 
         self._active_mode: RadarMode = RadarMode.SRC
@@ -97,10 +98,14 @@ class SimulationEngine:
         # 2. Compute raw returns
         raw_returns = self.physics.compute_all_returns(self.scenario.targets)
 
-        # 3. Process through active mode
+        # 3. Advance stateful modes (TWS needs scan + prediction step)
+        if hasattr(self.active_mode, 'tick'):
+            self.active_mode.tick(dt)
+
+        # 4. Process through active mode
         detections = self.active_mode.process(raw_returns)
 
-        # 4. Build ground truth for debug overlay
+        # 5. Build ground truth for debug overlay
         target_truth = []
         for t in self.scenario.targets:
             dx = t.x - self.position.x
@@ -122,7 +127,7 @@ class SimulationEngine:
                 "rcs": t.rcs,
             })
 
-        # 5. Radar params summary
+        # 6. Radar params summary
         params_summary = {
             "frequency_ghz": self.radar.frequency / 1e9,
             "prf_hz": self.radar.prf,

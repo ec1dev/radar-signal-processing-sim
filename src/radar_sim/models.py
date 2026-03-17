@@ -138,6 +138,8 @@ class Detection:
     target_id: str | None = None  # ground truth ID (for debugging/display)
     is_clutter: bool = False      # whether this detection is a clutter return
     is_ambiguous: bool = False    # range-ambiguous (true range > R_unamb)
+    track_id: str | None = None   # TWS track identifier
+    track_quality: float | None = None  # track confidence (0-1)
 
 
 # ─── Radar Mode Enum ─────────────────────────────────────────────────
@@ -159,5 +161,6 @@ class RawReturn:
     radial_velocity: float       # radial velocity toward radar (m/s), positive = closing
     received_power: float        # received power (W)
     doppler_hz: float            # Doppler shift (Hz)
+    azimuth_deg: float = 0.0    # azimuth from radar boresight (degrees), east positive
     target_id: str | None = None # None for clutter
     is_clutter: bool = False

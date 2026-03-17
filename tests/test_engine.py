@@ -31,9 +31,9 @@ class TestModeSwitching:
         engine.set_mode(RadarMode.PULSE_DOPPLER)
         assert engine._active_mode == RadarMode.PULSE_DOPPLER
 
-    def test_invalid_mode_raises(self, engine: SimulationEngine) -> None:
-        with pytest.raises(ValueError):
-            engine.set_mode(RadarMode.TWS)
+    def test_switch_to_tws(self, engine: SimulationEngine) -> None:
+        engine.set_mode(RadarMode.TWS)
+        assert engine._active_mode == RadarMode.TWS
 
 
 class TestTick:

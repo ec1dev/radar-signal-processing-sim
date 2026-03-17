@@ -1,41 +1,46 @@
 # Radar Signal Processing Simulator
 
-An interactive radar simulation demonstrating SRC, MTI, and Pulse Doppler signal processing modes -- built with real signal-level DSP, not toy math.
+An interactive, real-time radar simulation demonstrating how different signal processing modes handle airborne target detection in clutter. Features signal-level Pulse Doppler processing with FFT-based range-Doppler mapping, Extended Kalman Filter tracking, and a live B-scope web display.
 
-## Overview
+![Python](https://img.shields.io/badge/Python-3.11+-blue)
+![Tests](https://img.shields.io/badge/tests-105%20passing-green)
+![License](https://img.shields.io/badge/license-MIT-green)
 
-This project simulates an X-band airborne fighter radar (10 GHz, 50 kW peak power, PRF = 2000 Hz) processing the same airborne scenario through three fundamentally different signal processing modes. The simulation implements the complete data pipeline from target kinematics through the radar range equation to mode-specific detection algorithms.
+## Demo
 
-The technically significant piece is the **Pulse Doppler mode**, which performs actual signal-level processing: complex waveform synthesis across a 64-pulse coherent processing interval, Kaiser-windowed FFT to produce a range-Doppler map, spectral clutter notching, and Cell-Averaging CFAR detection. This is the same processing chain used in radars like the APG-68 (F-16) and APG-73 (F/A-18) -- implemented here with NumPy vectorized operations.
+| SRC (Search) | MTI (Moving Target Indication) |
+| :---: | :---: |
+| *Sea of clutter with targets buried in noise* | *Clutter eliminated -- targets at blind speeds vanish* |
 
-The default scenario includes five targets designed to demonstrate each mode's strengths and failure cases: a low-RCS cruise missile that SRC misses in clutter, a fighter at the first MTI blind speed, and a bomber beyond the unambiguous range that folds into Pulse Doppler's detection window.
+| Pulse Doppler | TWS (Track-While-Scan) |
+| :---: | :---: |
+| *Clean detections with calibrated velocity* | *EKF tracks building over multiple scan cycles* |
+
+> Run `python -m radar_sim` + `cd frontend && npm run dev` to see the full interactive B-scope display.
+
+## Why This Project Exists
+
+Radar signal processing is foundational to defense and aerospace systems, but the tradeoffs between processing modes are hard to understand without seeing them side by side. This simulator lets you toggle between four modes on the same airborne scenario and immediately see the consequences: clutter flooding the display in SRC, blind speed targets vanishing in MTI, range ambiguities folding in Pulse Doppler, and tracks converging in TWS.
+
+Growing up watching radar displays in DCS World and War Thunder, I wanted to understand the real engineering behind what those games simulate. This project is the result -- the same signal processing concepts that drive the AN/APG-68 and AN/AWG-9, implemented with real math and real physics, not game-engine approximations.
+
+Every mode uses actual radar engineering: the radar range equation for power computation, Doppler shift for velocity, Kaiser-windowed FFT for spectral analysis, CFAR for adaptive detection, and an Extended Kalman Filter for target tracking. The web frontend renders a B-scope display modeled after real fighter radar displays.
 
 ## Architecture
 
-```
-Scenario (5 targets, constant-velocity kinematics)
-    |
-    v
-PhysicsEngine
-    |  - Radar range equation: Pr = Pt*G^2*lam^2*sigma / (4*pi)^3*R^4
-    |  - Doppler shift: fd = 2*vr / lam
-    |  - Ground clutter: 200 cells with terrain reflectivity model
-    v
-list[RawReturn]  ---- received power, range, Doppler per scatterer
-    |
-    +---> SRCMode ------------> Range gating + fixed threshold
-    |                           (no filtering -- everything detected)
-    |
-    +---> MTIMode ------------> sin^2(pi*fd/PRF) filter response
-    |                           (clutter cancelled, blind speeds appear)
-    |
-    +---> PulseDopplerMode ---> Slow-time signal synthesis
-              |                  Kaiser window (beta=14, -80 dB sidelobes)
-              |                  N-point FFT --> range-Doppler map
-              |                  Clutter notch (+-5 bins around DC)
-              |                  CA-CFAR adaptive detection
-              v
-       list[Detection]  ---- range, velocity, SNR, ambiguity flags
+```text
+Scenario Engine          Signal Processing Modes            Frontend
++--------------+        +------------------------+       +--------------+
+|  Targets     |        |  SRC   (range gating)  |       |  B-Scope     |
+|  Motion      |--raw-->|  MTI   (3-pulse cancel) |--det->|  Display     |
+|  Clutter     | returns|  PD    (FFT / CFAR)    |       |  Controls    |
+|  Noise       |        |  TWS   (EKF tracking)  |       |  Parameters  |
++--------------+        +------------------------+       +--------------+
+      ^                          ^                            ^
+      |                          |                            |
+  Radar Equation            Plugin Architecture          WebSocket
+  R^4 propagation           BaseMode interface           Real-time
+  Doppler shift             Independent processing       20 Hz updates
 ```
 
 ## Mode Comparison
@@ -44,110 +49,138 @@ Results from the default scenario (5 airborne targets + 200 ground clutter cells
 
 | Metric | SRC | MTI | Pulse Doppler | TWS |
 | -------- | ----- | ----- | --------------- | ----- |
-| Targets detected (of 5) | 3 | 1-2 | 4 | 2+ (tracked) |
-| Clutter false alarms | 197 | 0 | 3-7 | 0 |
-| Velocity measurement | No | Approximate | Precise (FFT) | EKF-smoothed |
-| Clutter rejection | None | Pulse cancellation | Notch filter + CFAR | Scan gating + M/N |
+| Targets detected (of 5) | 3 | 1 | 4 | 4 (tracked) |
+| Clutter false alarms | 197 | 10 | 5 | 0 |
+| Velocity measurement | No | Approximate | Precise (FFT) | Filtered (EKF) |
+| Clutter rejection | None | 3-pulse cancellation | Doppler notch + CFAR | Via detection mode |
+| Tracking | No | No | No | Extended Kalman Filter |
 | Key weakness | Drowns in clutter | Blind speeds | Range ambiguity | Slow update rate |
 
 ## Key Demonstrations
 
-**MTI blind speed.** Target `tgt_5` moves at exactly 30 m/s -- the first blind speed ($v = \lambda \cdot \text{PRF} / 2 = 0.03 \times 2000 / 2$). Its Doppler phase shift between pulses is exactly $2\pi$, making it indistinguishable from clutter. MTI cancels it completely.
+**MTI blind speed.** Target `tgt_5` moves at exactly 30 m/s -- the first blind speed (`v = lambda * PRF / 2`). Its Doppler phase shift between pulses is exactly `2*pi`, making it indistinguishable from clutter. MTI cancels it completely.
 
-**Pulse Doppler clutter rejection.** SRC produces 197 clutter false alarms. Pulse Doppler reduces this to 3-7 through spectral notching (zeroing Doppler bins near DC) and CFAR adaptive thresholding that distinguishes target peaks from clutter sidelobes.
+**Clutter rejection.** SRC produces 197 clutter false alarms. MTI eliminates nearly all of them through pulse cancellation. Pulse Doppler reduces clutter to 5 through spectral notching and CFAR adaptive thresholding.
 
-**Range ambiguity.** The bomber (`tgt_2`) at 80 km is beyond the unambiguous range of 74.9 km. Pulse Doppler detects it at the folded range of 5.8 km ($80.7 \bmod 74.9$) and flags it as ambiguous.
+**Range ambiguity.** The bomber (`tgt_2`) at 80 km is beyond the max unambiguous range of 74.9 km. Pulse Doppler detects it at the folded range of 5.8 km and flags it as ambiguous.
 
-**Low-RCS detection.** The cruise missile (`tgt_3`, RCS = 0.1 m^2) is buried in clutter for SRC but resolves cleanly in Pulse Doppler because its Doppler shift (291 m/s closing) places it in a distinct spectral bin away from the clutter notch.
+**Low-RCS detection.** The cruise missile (`tgt_3`, RCS = 0.1 m^2) is buried in clutter for SRC but resolves cleanly in Pulse Doppler because its high closing velocity places it in a distinct Doppler bin away from the clutter notch.
 
-## Technical Detail
+**EKF convergence.** TWS builds confirmed tracks over multiple antenna scan cycles. Position uncertainty decreases from ~750 m to ~450 m as the EKF accumulates measurements, and velocity estimates converge to within a few m/s of ground truth.
 
-### Radar Range Equation
+## Default Scenario
 
-$$P_r = \frac{P_t \cdot G^2 \cdot \lambda^2 \cdot \sigma}{(4\pi)^3 \cdot R^4}$$
+Each target was chosen to demonstrate a specific radar engineering concept:
 
-With defaults: $P_t$ = 50 kW, $G$ = 33 dBi, $\lambda$ = 3 cm, $P_n = kTBF$ = 1.01 x 10^-14 W.
+| Target | Type | Range | Speed | RCS | Purpose |
+| -------- | -------- | ------- | ------- | ------- | --------- |
+| tgt_1 | Fighter | 40 km | 250 m/s | 3 m^2 | Medium target at moderate range |
+| tgt_2 | Bomber | 80 km | 150 m/s | 25 m^2 | Beyond R_unamb -- tests PD range folding |
+| tgt_3 | Cruise missile | 20 km | 300 m/s | 0.1 m^2 | Low RCS -- tests sensitivity in clutter |
+| tgt_4 | Helicopter | 15 km | 22 m/s | 10 m^2 | Slow mover, strong return |
+| tgt_5 | Fighter | 30 km | 30 m/s | 5 m^2 | Exactly at first MTI blind speed |
 
-### Mode Processing
+## Signal Processing Detail
 
-- **SRC:** Groups returns into 150 m range bins, sums power, thresholds at SNR > 13 dB. No filtering.
-- **MTI:** Applies $|H(f)|^2 = \sin^2(\pi f_d / \text{PRF})$ gain to each return. Zero at DC (clutter) and at blind speeds ($v = n \cdot 30$ m/s).
-- **Pulse Doppler:** Synthesizes slow-time signal $s[n] = \sum_k A_k e^{j 2\pi f_{d,k} n/\text{PRF}} + w[n]$, applies Kaiser window + FFT, notches DC, runs CA-CFAR with guard/training cells adapted around the notch.
-- **TWS:** Antenna scans 120 deg volume at 60 deg/s. Detections are associated to tracks via Mahalanobis gating. Matched tracks are updated with a 4-state Extended Kalman Filter (constant-velocity model, range-azimuth measurements). Tracks follow a tentative -> confirmed -> coasting -> dropped lifecycle with M-of-N confirmation.
+### Pulse Doppler
 
-See [docs/physics.md](docs/physics.md), [docs/modes.md](docs/modes.md), and [docs/architecture.md](docs/architecture.md) for full details.
+CPI waveform synthesis (64 pulses) -- Kaiser window (beta=14, -80 dB sidelobes) -- N-point FFT -- range-Doppler map -- clutter notch (+-5 bins around DC) -- CA-CFAR with guard/training cells -- 2D peak detection to collapse spectral leakage.
+
+### MTI
+
+3-pulse canceller with frequency response `|H(f)|^2 = sin^4(pi * f_d / PRF)`. Zero at DC (clutter cancelled) and at blind speeds `v = n * lambda * PRF / 2`. First blind speed = 30 m/s with default parameters.
+
+### TWS
+
+Extended Kalman Filter with 4-state constant-velocity model `[x, vx, y, vy]`. Measurements in polar (range, azimuth) with nonlinear measurement function and Jacobian. Mahalanobis gating for detection-to-track association. M-of-N (3/5) confirmation rule. Antenna scans 120 deg at 60 deg/s.
+
+See [docs/physics.md](docs/physics.md), [docs/modes.md](docs/modes.md), and [docs/architecture.md](docs/architecture.md) for full mathematical treatment.
 
 ## Quick Start
 
 ```bash
-git clone https://github.com/<your-username>/radar-signal-processing-sim.git
+# Clone and install
+git clone https://github.com/ec1dev/radar-signal-processing-sim.git
 cd radar-signal-processing-sim
 pip install -e ".[dev]"
 
-# Run the three-way mode comparison
+# Run the mode comparison
 python -m examples.basic_comparison
 
-# Run the test suite
+# Run the interactive demo
+python -m radar_sim                           # Terminal 1: backend
+cd frontend && npm install && npm run dev     # Terminal 2: frontend
+# Open http://localhost:5173
+
+# Run tests
 pytest
 ```
-
-### Interactive Demo (WebSocket + React)
-
-```bash
-# Terminal 1: start the backend
-python -m radar_sim
-
-# Terminal 2: start the frontend
-cd frontend && npm run dev
-```
-
-Open <http://localhost:5173> to see the interactive PPI scope display. Switch modes, adjust PRF/power/threshold with sliders, and watch detections update in real time.
 
 ### Example Scripts
 
 ```bash
-python -m examples.basic_comparison      # SRC vs MTI vs PD side-by-side
+python -m examples.basic_comparison      # SRC vs MTI vs PD comparison table
 python -m examples.blind_speed_demo      # MTI blind speed analysis
 python -m examples.range_ambiguity_demo  # PD range folding demonstration
 python -m examples.clutter_rejection     # Clutter false alarm comparison
-python -m examples.tws_tracking_demo     # TWS multi-target tracking over time
+python -m examples.tws_tracking_demo     # TWS multi-target tracking
+python -m examples.rcs_comparison        # Detection range vs RCS (stealth analysis)
+python -m examples.platform_comparison   # Fighter vs AWACS vs ground radar
 ```
 
 ## Project Structure
 
 ```text
-radar-signal-processing-sim/
-├── src/radar_sim/               # Main package
-│   ├── models.py                # Data types: Target, RadarParams, Detection, RawReturn
-│   ├── engine.py                # SimulationEngine: ties scenario + physics + modes
-│   ├── radar/physics.py         # Radar equation, Doppler, clutter model
-│   ├── scenario/world.py        # Scenario management, target kinematics
-│   ├── modes/
-│   │   ├── base_mode.py         # BaseMode ABC (plugin interface)
-│   │   ├── src.py               # Search mode (range gating)
-│   │   ├── mti.py               # Moving Target Indication (pulse canceller)
-│   │   ├── pulse_doppler.py     # Pulse Doppler (FFT + CFAR)
-│   │   └── tws/                 # Track-While-Scan (EKF + scan model)
-│   └── api/server.py            # FastAPI WebSocket server
-├── frontend/                    # React + TypeScript PPI scope display
-├── tests/                       # 105 pytest tests
-├── examples/                    # Runnable demonstration scripts
-├── docs/                        # Technical documentation
-│   ├── physics.md               # Radar equation, noise, clutter derivations
-│   ├── modes.md                 # Detailed mode processing documentation
-│   └── architecture.md          # System design and extension guide
-└── pyproject.toml               # Project metadata and tool configuration
+src/radar_sim/
+├── models.py                  # Core data types and radar parameters
+├── engine.py                  # Simulation controller
+├── radar/
+│   └── physics.py             # Radar equation, Doppler, clutter model
+├── modes/
+│   ├── base_mode.py           # Plugin interface (BaseMode ABC)
+│   ├── src.py                 # Search (range-gated threshold)
+│   ├── mti.py                 # Moving Target Indication (3-pulse canceller)
+│   ├── pulse_doppler.py       # Signal-level PD (FFT, CFAR, peak detection)
+│   └── tws/                   # Track-While-Scan
+│       ├── ekf_tracker.py         # Extended Kalman Filter
+│       ├── track_manager.py       # Track lifecycle (M-of-N confirmation)
+│       ├── scan_controller.py     # Antenna raster scan model
+│       └── association.py         # Mahalanobis gating + nearest-neighbour
+├── scenario/
+│   ├── world.py               # Scenario engine and defaults
+│   ├── presets.py             # Named scenarios (BVR, low-alt, dense)
+│   └── rcs_database.py       # Aircraft RCS reference data
+└── api/
+    └── server.py              # FastAPI WebSocket server (20 Hz)
+frontend/                      # React + TypeScript B-scope display
+tests/                         # 105 tests
+examples/                      # Runnable demonstrations
+docs/                          # Technical documentation
 ```
 
 ## Roadmap
 
-- [x] TWS (Track-While-Scan) mode with Extended Kalman Filter and multi-target tracking
-- [ ] FastAPI WebSocket server for real-time simulation streaming
-- [ ] React frontend with PPI/B-scope radar display
-- [ ] PRF agility for resolving blind speeds and range ambiguities
-- [ ] Antenna scan pattern and beam shape modeling
-- [ ] CFAR variants (OS-CFAR, GO-CFAR) for different clutter environments
-- [ ] DRFM jammer modeling and electronic countermeasures
+- [x] SRC search mode
+- [x] MTI with blind speed modeling (3-pulse canceller)
+- [x] Signal-level Pulse Doppler (FFT, CFAR, peak detection)
+- [x] TWS with Extended Kalman Filter and multi-target tracking
+- [x] Interactive web frontend (B-scope display)
+- [x] Real-time parameter adjustment (PRF, power, threshold)
+- [x] Named scenario presets with real-world flavor
+- [ ] Probabilistic detection model (Pd/Pfa with Swerling cases)
+- [ ] PRF agility (multiple PRFs for blind speed / range ambiguity resolution)
+- [ ] Aspect-dependent RCS models
+- [ ] ECCM techniques (sidelobe blanking, frequency agility)
+- [ ] Single Target Track (STT) mode
+- [ ] Terrain-aware clutter model (DEM-based)
+- [ ] Multi-radar fusion
+
+## References
+
+- Skolnik, M. -- *Introduction to Radar Systems* (3rd ed.)
+- Richards, M. -- *Fundamentals of Radar Signal Processing* (2nd ed.)
+- Stimson, G.W. -- *Introduction to Airborne Radar* (2nd ed.)
+- Barton, D.K. -- *Radar System Analysis and Modeling*
 
 ## License
 

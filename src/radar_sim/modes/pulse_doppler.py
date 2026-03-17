@@ -270,11 +270,28 @@ class PulseDopplerMode(BaseMode):
         noise_floor = self.radar.noise_power * self._window_sq_sum
 
         # Detect: above CFAR threshold AND outside the notch
-        det_ri, det_di = np.nonzero(
-            (power_map > threshold_map) & ~notch_mask[np.newaxis, :]
-        )
+        above_cfar = (power_map > threshold_map) & ~notch_mask[np.newaxis, :]
 
-        # 4. build Detection objects
+        # 4. Local-maximum filter — collapse spectral leakage into one
+        #    detection per peak.  A cell is a peak only if its power is
+        #    >= all 8-connected neighbours in the range-Doppler map.
+        n_r, n_d = power_map.shape
+        is_peak = above_cfar.copy()
+        for dr in (-1, 0, 1):
+            for dd in (-1, 0, 1):
+                if dr == 0 and dd == 0:
+                    continue
+                shifted = np.zeros_like(power_map)
+                r_src = slice(max(0, -dr), n_r + min(0, -dr))
+                r_dst = slice(max(0, dr), n_r + min(0, dr))
+                d_src = slice(max(0, -dd), n_d + min(0, -dd))
+                d_dst = slice(max(0, dd), n_d + min(0, dd))
+                shifted[r_dst, d_dst] = power_map[r_src, d_src]
+                is_peak &= power_map >= shifted
+
+        det_ri, det_di = np.nonzero(is_peak)
+
+        # 5. build Detection objects
         detections: list[Detection] = []
         for ri, di in zip(det_ri, det_di):
             range_m = float(range_centers[ri])

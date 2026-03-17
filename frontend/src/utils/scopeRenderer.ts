@@ -21,8 +21,8 @@ const C = {
   hud: "#2a8a2a",
   det: "#00ff41",           // bright green — real targets
   detLabel: "#00ff41",
-  clutter: "#0a1a0a",       // barely visible — noise/static
-  unknown: "#1a4a1a",       // dim — unclassified returns
+  clutter: "#1a4a1a",       // dim green — visible noise/static (not invisible)
+  unknown: "#2a6a2a",       // medium dim — unclassified returns
   ambiguous: "#ffaa00",     // amber — range-ambiguous PD detections
   gt: "rgba(0,191,255,0.5)",
   beam: "rgba(0,255,65,0.18)",
@@ -215,25 +215,25 @@ export function renderScope(
     let h: number;   // blip half-height (px)
 
     if (isClutter) {
-      // Tier 1: barely-visible noise static
+      // Tier 1: dim but VISIBLE noise — creates the "sea of static" in SRC
       color = C.clutter;
-      w = 1;
-      h = 0.5;
-    } else if (!isTarget) {
-      // Tier 2: unclassified — visible but not prominent
-      color = C.unknown;
       w = 2;
       h = 1;
+    } else if (!isTarget) {
+      // Tier 2: unclassified — brighter than clutter, no labels
+      color = C.unknown;
+      w = 3;
+      h = 1.5;
     } else if (d.is_ambiguous) {
       // Tier 3a: real target, range-ambiguous (PD)
       color = C.ambiguous;
-      w = 4;
-      h = 1.5;
+      w = 5;
+      h = 2;
     } else {
       // Tier 3b: real target, clean detection
       color = C.det;
-      w = 4;
-      h = 1.5;
+      w = 5;
+      h = 2;
     }
 
     // SNR-based scaling (targets and unknowns only — clutter stays tiny)

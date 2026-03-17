@@ -86,6 +86,7 @@ class MTIMode(BaseMode):
         bin_target_ids: list[list] = [[] for _ in range(num_bins)]
         bin_velocities: list[list] = [[] for _ in range(num_bins)]
         bin_azimuths: list[list[float]] = [[] for _ in range(num_bins)]
+        bin_has_clutter = [False] * num_bins
 
         for ret in raw_returns:
             bin_idx = int(ret.range_m / range_res)
@@ -100,6 +101,8 @@ class MTIMode(BaseMode):
                 if ret.target_id is not None:
                     bin_target_ids[bin_idx].append(ret.target_id)
                     bin_velocities[bin_idx].append(ret.radial_velocity)
+                if ret.is_clutter:
+                    bin_has_clutter[bin_idx] = True
 
         # Detection
         for i in range(num_bins):
@@ -115,13 +118,16 @@ class MTIMode(BaseMode):
 
                 azimuth = bin_azimuths[i][0] if bin_azimuths[i] else 0.0
 
+                # Flag as clutter if no target contributed to this bin
+                is_clutter = bin_has_clutter[i] and not bin_target_ids[i]
+
                 detections.append(Detection(
                     range_m=range_m,
                     azimuth_deg=azimuth,
                     velocity_mps=velocity,
                     snr_db=10 * np.log10(snr),
                     target_id=target_id,
-                    is_clutter=False,  # MTI filtered out clutter
+                    is_clutter=is_clutter,
                 ))
 
         return detections

@@ -53,7 +53,7 @@ class SimulationEngine:
         # Initialize available modes
         self._modes: dict[RadarMode, BaseMode] = {
             RadarMode.SRC: SRCMode(self.radar),
-            RadarMode.MTI: MTIMode(self.radar, num_pulses=2),
+            RadarMode.MTI: MTIMode(self.radar, num_pulses=3),
             RadarMode.PULSE_DOPPLER: PulseDopplerMode(self.radar),
             RadarMode.TWS: TWSMode(self.radar, position=self.position),
         }

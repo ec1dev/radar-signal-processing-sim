@@ -46,13 +46,22 @@ TRACK_HISTORY_LEN = 50
 
 
 def _py(v):
-    """Convert numpy scalars to native Python types for JSON serialization."""
+    """Convert numpy scalars to native Python types for JSON serialization.
+
+    Handles numpy integer/float/bool/ndarray and sanitises NaN/inf
+    to None so json.dumps never produces invalid JSON tokens.
+    """
+    if isinstance(v, np.bool_):
+        return bool(v)
     if isinstance(v, (np.integer,)):
         return int(v)
     if isinstance(v, (np.floating,)):
-        return float(v)
+        f = float(v)
+        if math.isnan(f) or math.isinf(f):
+            return None
+        return f
     if isinstance(v, np.ndarray):
-        return v.tolist()
+        return [_py(x) for x in v.flat]
     if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
         return None
     return v
@@ -65,8 +74,8 @@ def _serialize_detection(d: Detection) -> dict:
         "velocity_mps": _py(d.velocity_mps),
         "snr_db": _py(d.snr_db),
         "target_id": d.target_id,
-        "is_clutter": d.is_clutter,
-        "is_ambiguous": d.is_ambiguous,
+        "is_clutter": bool(d.is_clutter),
+        "is_ambiguous": bool(d.is_ambiguous),
         "track_id": d.track_id,
         "track_quality": _py(d.track_quality),
     }
@@ -159,9 +168,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     dt = 0.05  # 20 Hz
 
     async def send_frame() -> None:
-        frame = engine.tick(dt)
-        msg = serialize_frame(frame, engine, track_history)
-        await websocket.send_text(json.dumps(msg))
+        try:
+            frame = engine.tick(dt)
+            msg = serialize_frame(frame, engine, track_history)
+            await websocket.send_text(json.dumps(msg))
+        except Exception:
+            import traceback
+            traceback.print_exc()
 
     try:
         while True:

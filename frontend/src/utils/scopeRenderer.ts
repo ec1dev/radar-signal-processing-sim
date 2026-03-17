@@ -19,9 +19,11 @@ const C = {
   grid: "#0d3d0d",
   gridLabel: "#1a5c1a",
   hud: "#2a8a2a",
-  det: "#00ff41",
-  clutter: "#1a5c1a",
-  ambiguous: "#ff4444",
+  det: "#00ff41",           // bright green — real targets
+  detLabel: "#00ff41",
+  clutter: "#0a1a0a",       // barely visible — noise/static
+  unknown: "#1a4a1a",       // dim — unclassified returns
+  ambiguous: "#ffaa00",     // amber — range-ambiguous PD detections
   gt: "rgba(0,191,255,0.5)",
   beam: "rgba(0,255,65,0.18)",
   trkConfirmed: "#00ff41",
@@ -189,6 +191,10 @@ export function renderScope(
   }
 
   // ── detections ─────────────────────────────────────────────────
+  // Three-tier rendering:
+  //   1. Clutter  (is_clutter=true)           → nearly invisible noise/static
+  //   2. Unknown  (no target_id, not clutter) → dim blip, no label
+  //   3. Target   (has target_id)             → bright blip + labels
   const isTWS = modeName.toLowerCase().includes("tws");
   const isPD = modeName.toLowerCase().includes("pd") || modeName.toLowerCase().includes("pulse");
 
@@ -197,39 +203,74 @@ export function renderScope(
     if (Math.abs(az) > HALF_SCAN) continue;
     const p = toXY(az, Math.min(d.range_m, maxRange), dw, dh, maxRange);
 
-    // Skip TWS track-based detections (already rendered as tracks)
+    // Skip TWS track-based detections (already rendered as tracks above)
     if (isTWS && d.track_id) continue;
 
-    let color = C.det;
-    let sz = 3;
-    if (d.is_clutter) {
+    // Classify: clutter → unknown → ambiguous → real target
+    const isTarget = d.target_id != null && !d.is_clutter;
+    const isClutter = d.is_clutter;
+
+    let color: string;
+    let w: number;   // blip half-width (px)
+    let h: number;   // blip half-height (px)
+
+    if (isClutter) {
+      // Tier 1: barely-visible noise static
       color = C.clutter;
-      sz = 1.5;
+      w = 1;
+      h = 0.5;
+    } else if (!isTarget) {
+      // Tier 2: unclassified — visible but not prominent
+      color = C.unknown;
+      w = 2;
+      h = 1;
     } else if (d.is_ambiguous) {
+      // Tier 3a: real target, range-ambiguous (PD)
       color = C.ambiguous;
+      w = 4;
+      h = 1.5;
+    } else {
+      // Tier 3b: real target, clean detection
+      color = C.det;
+      w = 4;
+      h = 1.5;
     }
-    const snrScale = Math.min(Math.max(d.snr_db / 40, 0.4), 2);
-    sz *= snrScale;
 
-    // Blip
+    // SNR-based scaling (targets and unknowns only — clutter stays tiny)
+    if (!isClutter) {
+      const snr = d.snr_db ?? 0;
+      if (snr > 40)      { w *= 1.8; h *= 1.6; }
+      else if (snr > 30) { w *= 1.4; h *= 1.3; }
+      else if (snr > 20) { w *= 1.0; h *= 1.0; }
+      else               { w *= 0.7; h *= 0.7; }
+    }
+
+    // Draw blip
     ctx.fillStyle = color;
-    ctx.fillRect(p.x - sz, p.y - 1, sz * 2, 2);
+    ctx.fillRect(p.x - w, p.y - h, w * 2, h * 2);
 
-    // Ambiguous marker
+    // Ambiguous ring
     if (d.is_ambiguous) {
       ctx.strokeStyle = C.ambiguous;
       ctx.lineWidth = 0.8;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, sz + 4, 0, 2 * Math.PI);
+      ctx.arc(p.x, p.y, w + 4, 0, 2 * Math.PI);
       ctx.stroke();
     }
 
-    // PD velocity label on non-clutter detections
-    if (isPD && !d.is_clutter && d.velocity_mps != null && d.target_id) {
-      ctx.fillStyle = C.det;
-      ctx.font = "7px monospace";
+    // Labels for real targets only
+    if (isTarget) {
+      ctx.fillStyle = C.detLabel;
+      ctx.font = "8px monospace";
       ctx.textAlign = "left";
-      ctx.fillText(`${d.velocity_mps.toFixed(0)}m/s`, p.x + sz + 3, p.y + 3);
+      let lbl = d.target_id!;
+      if (isPD && d.velocity_mps != null) {
+        lbl += ` ${d.velocity_mps.toFixed(0)}m/s`;
+      }
+      if (d.is_ambiguous) {
+        lbl += " [AMB]";
+      }
+      ctx.fillText(lbl, p.x + w + 3, p.y + 3);
     }
   }
 

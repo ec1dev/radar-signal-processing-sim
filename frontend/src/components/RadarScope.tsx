@@ -22,6 +22,10 @@ export function RadarScope({ frame, showGroundTruth }: Props) {
     canvas.height = rect.height * dpr;
     ctx.scale(dpr, dpr);
 
+    const numTracks = frame.tracks
+      ? frame.tracks.filter(t => t.status === "confirmed" || t.status === "coasting").length
+      : 0;
+
     renderScope(
       ctx,
       rect.width,
@@ -30,6 +34,10 @@ export function RadarScope({ frame, showGroundTruth }: Props) {
       frame.targets,
       frame.radar_params.max_unamb_range_km,
       showGroundTruth,
+      frame.mode,
+      frame.radar_params.prf_hz,
+      frame.mode_info.num_detections,
+      numTracks,
       frame.tracks,
       frame.scan_beam_az,
     );
@@ -43,8 +51,8 @@ export function RadarScope({ frame, showGroundTruth }: Props) {
   return (
     <canvas
       ref={canvasRef}
-      className="w-full aspect-square max-h-[600px] rounded"
-      style={{ imageRendering: "auto" }}
+      className="w-full rounded"
+      style={{ aspectRatio: "4 / 3", maxHeight: 520, imageRendering: "auto" }}
     />
   );
 }

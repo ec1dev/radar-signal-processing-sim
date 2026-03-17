@@ -123,10 +123,10 @@ class PhysicsEngine:
             clutter_vel = np.random.normal(0, 0.5)  # small spread, m/s
             clutter_doppler = 2 * clutter_vel / self.radar.wavelength
 
-            # Distribute clutter across the beam — azimuth centered on boresight
-            clutter_az = np.random.uniform(
-                -self.radar.beamwidth_az / 2, self.radar.beamwidth_az / 2
-            )
+            # Distribute clutter across the full scan volume for display.
+            # In a real radar, clutter appears wherever the beam points during
+            # a scan.  We model this as uniform azimuth across ±45 degrees.
+            clutter_az = np.random.uniform(-45.0, 45.0)
 
             clutter_returns.append(RawReturn(
                 range_m=r,

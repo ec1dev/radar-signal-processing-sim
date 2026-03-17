@@ -85,6 +85,7 @@ class MTIMode(BaseMode):
         bin_power = np.zeros(num_bins)
         bin_target_ids: list[list] = [[] for _ in range(num_bins)]
         bin_velocities: list[list] = [[] for _ in range(num_bins)]
+        bin_azimuths: list[list[float]] = [[] for _ in range(num_bins)]
 
         for ret in raw_returns:
             bin_idx = int(ret.range_m / range_res)
@@ -94,6 +95,7 @@ class MTIMode(BaseMode):
                 filtered_power = ret.received_power * mti_gain
 
                 bin_power[bin_idx] += filtered_power
+                bin_azimuths[bin_idx].append(ret.azimuth_deg)
 
                 if ret.target_id is not None:
                     bin_target_ids[bin_idx].append(ret.target_id)
@@ -111,8 +113,11 @@ class MTIMode(BaseMode):
                 # MTI doesn't give precise velocity, but we know there's motion
                 velocity = bin_velocities[i][0] if bin_velocities[i] else None
 
+                azimuth = bin_azimuths[i][0] if bin_azimuths[i] else 0.0
+
                 detections.append(Detection(
                     range_m=range_m,
+                    azimuth_deg=azimuth,
                     velocity_mps=velocity,
                     snr_db=10 * np.log10(snr),
                     target_id=target_id,

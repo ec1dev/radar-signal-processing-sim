@@ -1,48 +1,54 @@
+/**
+ * B-scope renderer — rectangular azimuth (x) vs range (y) display.
+ *
+ * Layout (War Thunder style):
+ *   X-axis: azimuth in degrees, left = negative, right = positive
+ *   Y-axis: range, TOP = close (0 km), BOTTOM = max range
+ *
+ * The scan volume is ±60 degrees.  Grid lines are drawn for range
+ * and azimuth intervals.  Detections are rendered as bright blips,
+ * with distinct styles for clutter, ambiguous, and tracked targets.
+ */
+
 import type { Detection, GroundTruthTarget, TWSTrack } from "../types/radar";
 
-const COLORS = {
+const HALF_SCAN = 60; // degrees
+
+const C = {
   bg: "#0a0f0a",
-  ring: "#0d3d0d",
-  ringLabel: "#1a5c1a",
-  detection: "#00ff41",
+  grid: "#0d3d0d",
+  gridLabel: "#1a5c1a",
+  hud: "#2a8a2a",
+  det: "#00ff41",
   clutter: "#1a5c1a",
   ambiguous: "#ff4444",
-  groundTruth: "rgba(0,191,255,0.5)",
-  groundTruthLine: "rgba(0,191,255,0.25)",
-  beamSweep: "rgba(0,255,65,0.12)",
-  trackConfirmed: "#00ff41",
-  trackTentative: "#ffcc00",
-  trackCoasting: "#ff8c00",
-  trackTrail: "rgba(0,255,65,0.3)",
+  gt: "rgba(0,191,255,0.5)",
+  beam: "rgba(0,255,65,0.18)",
+  trkConfirmed: "#00ff41",
+  trkTentative: "#ffcc00",
+  trkCoasting: "#ff8c00",
+  trail: "rgba(0,255,65,0.25)",
 };
 
-function toCanvas(
-  azDeg: number,
-  rangeM: number,
-  cx: number,
-  cy: number,
-  radius: number,
-  maxRange: number,
+// Margins (px) for axis labels
+const ML = 36, MR = 10, MT = 20, MB = 18;
+
+/** Map (azimuth_deg, range_m) → canvas pixel coordinates. */
+function toXY(
+  az: number, rangeM: number,
+  dw: number, dh: number, maxRange: number,
 ) {
-  const azRad = (azDeg * Math.PI) / 180;
-  const r = (rangeM / maxRange) * radius;
-  return {
-    x: cx + r * Math.sin(azRad),
-    y: cy - r * Math.cos(azRad),
-  };
+  const x = ML + ((az + HALF_SCAN) / (2 * HALF_SCAN)) * dw;
+  const y = MT + (rangeM / maxRange) * dh;
+  return { x, y };
 }
 
-function xyToCanvas(
-  xEast: number,
-  yNorth: number,
-  cx: number,
-  cy: number,
-  radius: number,
-  maxRange: number,
-) {
-  const range = Math.sqrt(xEast * xEast + yNorth * yNorth);
-  const azDeg = (Math.atan2(xEast, yNorth) * 180) / Math.PI;
-  return toCanvas(azDeg, range, cx, cy, radius, maxRange);
+/** Map (x_east, y_north) in metres → (azimuth_deg, range_m). */
+function xyToAzRange(xE: number, yN: number): { az: number; range: number } {
+  return {
+    az: (Math.atan2(xE, yN) * 180) / Math.PI,
+    range: Math.sqrt(xE * xE + yN * yN),
+  };
 }
 
 export function renderScope(
@@ -53,186 +59,206 @@ export function renderScope(
   targets: GroundTruthTarget[],
   maxRangeKm: number,
   showGroundTruth: boolean,
+  modeName: string,
+  prfHz: number,
+  numDetections: number,
+  numTracks: number,
   tracks?: TWSTrack[],
   scanBeamAz?: number,
 ) {
-  const size = Math.min(width, height);
-  const cx = width / 2;
-  const cy = height / 2;
-  const radius = size / 2 - 30;
   const maxRange = maxRangeKm * 1000;
+  const dw = width - ML - MR;   // drawable width
+  const dh = height - MT - MB;   // drawable height
 
-  // Background
-  ctx.fillStyle = COLORS.bg;
+  // ── background ─────────────────────────────────────────────────
+  ctx.fillStyle = C.bg;
   ctx.fillRect(0, 0, width, height);
 
-  // Scope circle clip
-  ctx.save();
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius + 1, 0, 2 * Math.PI);
-  ctx.clip();
-
-  // Range rings
-  const ringCount = 5;
-  const ringSpacing = maxRangeKm / ringCount;
-  ctx.strokeStyle = COLORS.ring;
+  // ── grid lines ─────────────────────────────────────────────────
+  ctx.strokeStyle = C.grid;
   ctx.lineWidth = 0.5;
-  ctx.font = "10px monospace";
-  ctx.fillStyle = COLORS.ringLabel;
-  for (let i = 1; i <= ringCount; i++) {
-    const r = (i / ringCount) * radius;
+  ctx.font = "9px monospace";
+  ctx.fillStyle = C.gridLabel;
+
+  // Horizontal: range marks
+  const rangeStep = maxRangeKm <= 30 ? 5 : maxRangeKm <= 100 ? 15 : 25;
+  for (let rKm = 0; rKm <= maxRangeKm; rKm += rangeStep) {
+    const y = MT + (rKm / maxRangeKm) * dh;
     ctx.beginPath();
-    ctx.arc(cx, cy, r, 0, 2 * Math.PI);
+    ctx.moveTo(ML, y);
+    ctx.lineTo(ML + dw, y);
     ctx.stroke();
-    ctx.fillText(`${(i * ringSpacing).toFixed(0)} km`, cx + 4, cy - r + 12);
+    ctx.textAlign = "right";
+    ctx.fillText(`${rKm}`, ML - 4, y + 3);
   }
 
-  // Cardinal lines
-  ctx.strokeStyle = COLORS.ring;
-  ctx.lineWidth = 0.3;
-  for (let deg = 0; deg < 360; deg += 30) {
-    const rad = (deg * Math.PI) / 180;
+  // Vertical: azimuth marks
+  const azStep = HALF_SCAN <= 30 ? 10 : 15;
+  for (let az = -HALF_SCAN; az <= HALF_SCAN; az += azStep) {
+    const x = ML + ((az + HALF_SCAN) / (2 * HALF_SCAN)) * dw;
     ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(cx + radius * Math.sin(rad), cy - radius * Math.cos(rad));
+    ctx.moveTo(x, MT);
+    ctx.lineTo(x, MT + dh);
     ctx.stroke();
+    ctx.textAlign = "center";
+    ctx.fillText(`${az > 0 ? "+" : ""}${az}\u00b0`, x, MT - 5);
   }
-  // Cardinal labels
-  ctx.fillStyle = COLORS.ringLabel;
-  ctx.font = "11px monospace";
-  ctx.textAlign = "center";
-  ctx.fillText("N", cx, cy - radius - 6);
-  ctx.fillText("S", cx, cy + radius + 14);
-  ctx.fillText("E", cx + radius + 12, cy + 4);
-  ctx.fillText("W", cx - radius - 12, cy + 4);
 
-  // TWS beam sweep
+  // ── TWS scan bar ───────────────────────────────────────────────
   if (scanBeamAz !== undefined) {
-    const azRad = (scanBeamAz * Math.PI) / 180;
-    ctx.strokeStyle = COLORS.beamSweep;
-    ctx.lineWidth = 3;
+    const bx = ML + ((scanBeamAz + HALF_SCAN) / (2 * HALF_SCAN)) * dw;
+    ctx.strokeStyle = C.beam;
+    ctx.lineWidth = 2;
     ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(cx + radius * Math.sin(azRad), cy - radius * Math.cos(azRad));
+    ctx.moveTo(bx, MT);
+    ctx.lineTo(bx, MT + dh);
     ctx.stroke();
   }
 
-  // Ground truth overlay
+  // ── ground truth ───────────────────────────────────────────────
   if (showGroundTruth) {
     for (const t of targets) {
-      if (t.range_m > maxRange) continue;
-      const p = xyToCanvas(t.x, t.y, cx, cy, radius, maxRange);
+      const { az, range } = xyToAzRange(t.x, t.y);
+      if (Math.abs(az) > HALF_SCAN || range > maxRange) continue;
+      const p = toXY(az, range, dw, dh, maxRange);
       // Crosshair
-      ctx.strokeStyle = COLORS.groundTruth;
+      ctx.strokeStyle = C.gt;
       ctx.lineWidth = 1;
       ctx.beginPath();
-      ctx.moveTo(p.x - 6, p.y);
-      ctx.lineTo(p.x + 6, p.y);
-      ctx.moveTo(p.x, p.y - 6);
-      ctx.lineTo(p.x, p.y + 6);
+      ctx.moveTo(p.x - 5, p.y); ctx.lineTo(p.x + 5, p.y);
+      ctx.moveTo(p.x, p.y - 5); ctx.lineTo(p.x, p.y + 5);
       ctx.stroke();
-      // Label
-      ctx.fillStyle = COLORS.groundTruth;
-      ctx.font = "9px monospace";
+      ctx.fillStyle = C.gt;
+      ctx.font = "8px monospace";
       ctx.textAlign = "left";
-      ctx.fillText(t.id, p.x + 8, p.y - 4);
+      ctx.fillText(t.id, p.x + 7, p.y - 3);
     }
   }
 
-  // TWS track trails and positions
+  // ── TWS tracks ─────────────────────────────────────────────────
   if (tracks) {
     for (const trk of tracks) {
+      const { az, range } = xyToAzRange(trk.x, trk.y);
+      if (Math.abs(az) > HALF_SCAN) continue;
+      const p = toXY(az, Math.min(range, maxRange), dw, dh, maxRange);
+
       const color =
-        trk.status === "confirmed"
-          ? COLORS.trackConfirmed
-          : trk.status === "tentative"
-            ? COLORS.trackTentative
-            : COLORS.trackCoasting;
+        trk.status === "confirmed" ? C.trkConfirmed
+        : trk.status === "tentative" ? C.trkTentative
+        : C.trkCoasting;
 
       // Trail
       if (trk.history.length > 1) {
-        ctx.strokeStyle = COLORS.trackTrail;
+        ctx.strokeStyle = C.trail;
         ctx.lineWidth = 1;
         ctx.beginPath();
-        const p0 = xyToCanvas(trk.history[0][0], trk.history[0][1], cx, cy, radius, maxRange);
-        ctx.moveTo(p0.x, p0.y);
-        for (let i = 1; i < trk.history.length; i++) {
-          const pi = xyToCanvas(trk.history[i][0], trk.history[i][1], cx, cy, radius, maxRange);
-          ctx.lineTo(pi.x, pi.y);
+        for (let i = 0; i < trk.history.length; i++) {
+          const h = xyToAzRange(trk.history[i][0], trk.history[i][1]);
+          const hp = toXY(h.az, Math.min(h.range, maxRange), dw, dh, maxRange);
+          if (i === 0) ctx.moveTo(hp.x, hp.y);
+          else ctx.lineTo(hp.x, hp.y);
         }
         ctx.stroke();
       }
 
-      // Track position
-      const tp = xyToCanvas(trk.x, trk.y, cx, cy, radius, maxRange);
-
-      // Uncertainty circle
-      const uncR = (trk.uncertainty / maxRange) * radius;
+      // Track box [ ]
+      const bsz = 8;
       ctx.strokeStyle = color;
-      ctx.lineWidth = 0.5;
-      ctx.globalAlpha = 0.3;
-      ctx.beginPath();
-      ctx.arc(tp.x, tp.y, Math.max(uncR, 3), 0, 2 * Math.PI);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(p.x - bsz, p.y - bsz, bsz * 2, bsz * 2);
 
-      // Track marker
+      // Center dot
       ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(tp.x, tp.y, 4, 0, 2 * Math.PI);
+      ctx.arc(p.x, p.y, 2, 0, 2 * Math.PI);
       ctx.fill();
 
-      // Track label
+      // Velocity vector
+      const vScale = 0.08;
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(p.x + trk.vx * vScale, p.y - trk.vy * vScale);
+      ctx.stroke();
+
+      // Label
       ctx.fillStyle = color;
       ctx.font = "9px monospace";
       ctx.textAlign = "left";
-      ctx.fillText(trk.track_id, tp.x + 7, tp.y - 5);
+      ctx.fillText(trk.track_id, p.x + bsz + 3, p.y - 3);
     }
   }
 
-  // Detections (draw after tracks so they appear on top)
+  // ── detections ─────────────────────────────────────────────────
+  const isTWS = modeName.toLowerCase().includes("tws");
+  const isPD = modeName.toLowerCase().includes("pd") || modeName.toLowerCase().includes("pulse");
+
   for (const d of detections) {
-    const p = toCanvas(d.azimuth_deg, d.range_m, cx, cy, radius, maxRange);
-    if (p.x < 0 || p.x > width || p.y < 0 || p.y > height) continue;
+    const az = d.azimuth_deg;
+    if (Math.abs(az) > HALF_SCAN) continue;
+    const p = toXY(az, Math.min(d.range_m, maxRange), dw, dh, maxRange);
 
-    let color = COLORS.detection;
-    let size = 2.5;
+    // Skip TWS track-based detections (already rendered as tracks)
+    if (isTWS && d.track_id) continue;
+
+    let color = C.det;
+    let sz = 3;
     if (d.is_clutter) {
-      color = COLORS.clutter;
-      size = 1.5;
+      color = C.clutter;
+      sz = 1.5;
     } else if (d.is_ambiguous) {
-      color = COLORS.ambiguous;
+      color = C.ambiguous;
     }
-    // Scale by SNR
-    const snrScale = Math.min(Math.max(d.snr_db / 40, 0.5), 2.5);
-    size *= snrScale;
+    const snrScale = Math.min(Math.max(d.snr_db / 40, 0.4), 2);
+    sz *= snrScale;
 
+    // Blip
     ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(p.x, p.y, size, 0, 2 * Math.PI);
-    ctx.fill();
+    ctx.fillRect(p.x - sz, p.y - 1, sz * 2, 2);
 
+    // Ambiguous marker
     if (d.is_ambiguous) {
-      ctx.strokeStyle = COLORS.ambiguous;
+      ctx.strokeStyle = C.ambiguous;
       ctx.lineWidth = 0.8;
       ctx.beginPath();
-      ctx.arc(p.x, p.y, size + 3, 0, 2 * Math.PI);
+      ctx.arc(p.x, p.y, sz + 4, 0, 2 * Math.PI);
       ctx.stroke();
+    }
+
+    // PD velocity label on non-clutter detections
+    if (isPD && !d.is_clutter && d.velocity_mps != null && d.target_id) {
+      ctx.fillStyle = C.det;
+      ctx.font = "7px monospace";
+      ctx.textAlign = "left";
+      ctx.fillText(`${d.velocity_mps.toFixed(0)}m/s`, p.x + sz + 3, p.y + 3);
     }
   }
 
-  // Center dot (radar)
-  ctx.fillStyle = COLORS.detection;
-  ctx.beginPath();
-  ctx.arc(cx, cy, 2, 0, 2 * Math.PI);
-  ctx.fill();
+  // ── HUD overlay ────────────────────────────────────────────────
+  ctx.font = "11px monospace";
 
-  ctx.restore();
+  // Top-left: mode
+  ctx.fillStyle = C.hud;
+  ctx.textAlign = "left";
+  const shortMode = modeName.split("(")[0].trim();
+  ctx.fillText(shortMode, ML + 4, MT + 14);
 
-  // Scope border
-  ctx.strokeStyle = COLORS.ring;
+  // Top-right: PRF
+  ctx.textAlign = "right";
+  ctx.fillText(`PRF ${prfHz.toFixed(0)}`, ML + dw - 4, MT + 14);
+
+  // Bottom-left: detection count
+  ctx.textAlign = "left";
+  const label = numTracks > 0
+    ? `TRK ${numTracks}`
+    : `DET ${numDetections}`;
+  ctx.fillText(label, ML + 4, MT + dh - 4);
+
+  // Bottom-right: range scale
+  ctx.textAlign = "right";
+  ctx.fillText(`${maxRangeKm.toFixed(0)} km`, ML + dw - 4, MT + dh - 4);
+
+  // ── border ─────────────────────────────────────────────────────
+  ctx.strokeStyle = C.grid;
   ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.arc(cx, cy, radius, 0, 2 * Math.PI);
-  ctx.stroke();
+  ctx.strokeRect(ML, MT, dw, dh);
 }

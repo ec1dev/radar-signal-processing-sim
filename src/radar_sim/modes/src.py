@@ -47,11 +47,13 @@ class SRCMode(BaseMode):
         bin_power = np.zeros(num_bins)         # total power per bin
         bin_target_ids: list[list] = [[] for _ in range(num_bins)]
         bin_has_clutter = [False] * num_bins
+        bin_azimuths: list[list[float]] = [[] for _ in range(num_bins)]
 
         for ret in raw_returns:
             bin_idx = int(ret.range_m / range_res)
             if 0 <= bin_idx < num_bins:
                 bin_power[bin_idx] += ret.received_power
+                bin_azimuths[bin_idx].append(ret.azimuth_deg)
                 if ret.target_id is not None:
                     bin_target_ids[bin_idx].append(ret.target_id)
                 if ret.is_clutter:
@@ -70,8 +72,11 @@ class SRCMode(BaseMode):
                 target_id = bin_target_ids[i][0] if bin_target_ids[i] else None
                 is_clutter = bin_has_clutter[i] and not bin_target_ids[i]
 
+                azimuth = bin_azimuths[i][0] if bin_azimuths[i] else 0.0
+
                 detections.append(Detection(
                     range_m=range_m,
+                    azimuth_deg=azimuth,
                     velocity_mps=None,  # SRC doesn't measure velocity
                     snr_db=10 * np.log10(snr),
                     target_id=target_id,

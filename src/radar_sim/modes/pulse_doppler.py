@@ -294,6 +294,7 @@ class PulseDopplerMode(BaseMode):
             target_id: str | None = None
             is_clutter = False
             is_ambiguous = False
+            azimuth_deg = 0.0
 
             if scatterers:
                 aliased_dopplers = self._alias_doppler(
@@ -304,9 +305,11 @@ class PulseDopplerMode(BaseMode):
                 target_id = best.target_id
                 is_clutter = best.is_clutter
                 is_ambiguous = best.range_m > r_unamb
+                azimuth_deg = best.azimuth_deg
 
             detections.append(Detection(
                 range_m=range_m,
+                azimuth_deg=azimuth_deg,
                 velocity_mps=velocity_mps,
                 snr_db=snr_db,
                 target_id=target_id,
